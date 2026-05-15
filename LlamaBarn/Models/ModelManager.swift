@@ -436,7 +436,7 @@ class ModelManager: NSObject, URLSessionDataDelegate {
 
       // Enable larger batch size for better performance on high-memory devices (>=32 GB RAM)
       let systemMemoryGb = Double(SystemMemory.memoryMb) / 1024.0
-      if systemMemoryGb >= 32.0 {
+      if systemMemoryGb >= 32.0 && !model.hasServerArg("ubatch-size") {
         content += "ubatch-size = 2048\n"
       }
 
@@ -486,11 +486,13 @@ class ModelManager: NSObject, URLSessionDataDelegate {
       var allResolved: [String: ResolvedPaths] = [:]
 
       // 1. Scan legacy directory (~/.llamabarn/) for flat .gguf files
+      var legacyMatchedFiles: Set<String> = []
       if let files = try? FileManager.default.contentsOfDirectory(atPath: legacyDir.path) {
         let fileSet = Set(files)
         for model in allCatalogModels {
           let mainFile = model.downloadUrl.lastPathComponent
           guard fileSet.contains(mainFile) else { continue }
+          legacyMatchedFiles.insert(mainFile)
 
           // Check additional parts (shards)
           var partsFound = true
@@ -498,6 +500,7 @@ class ModelManager: NSObject, URLSessionDataDelegate {
           if let additionalParts = model.additionalParts {
             for part in additionalParts {
               if fileSet.contains(part.lastPathComponent) {
+                legacyMatchedFiles.insert(part.lastPathComponent)
                 partPaths.append(legacyDir.appendingPathComponent(part.lastPathComponent).path)
               } else {
                 partsFound = false
@@ -512,6 +515,7 @@ class ModelManager: NSObject, URLSessionDataDelegate {
           if let mmprojUrl = model.mmprojUrl {
             let mmprojFile = model.localFilename(for: mmprojUrl)
             if fileSet.contains(mmprojFile) {
+              legacyMatchedFiles.insert(mmprojFile)
               mmprojPath = legacyDir.appendingPathComponent(mmprojFile).path
             } else {
               continue
@@ -533,15 +537,23 @@ class ModelManager: NSObject, URLSessionDataDelegate {
         allResolved[modelId] = paths
       }
 
-      // 3. Discover sideloaded models (GGUFs not matching any catalog entry)
-      let sideloaded = HFCache.scanForSideloaded(
+      // 3. Discover sideloaded models (GGUFs not matching any catalog entry).
+      // Legacy flat-dir scans also read old models.ini files so catalog entries
+      // removed in an app update keep their original model IDs and settings.
+      let legacySideloaded = LegacyModelScanner.scan(
+        directory: legacyDir,
+        knownFiles: legacyMatchedFiles
+      )
+      let hfSideloaded = HFCache.scanForSideloaded(
         cacheDir: hfCacheDir, knownFiles: hfScan.matchedFiles
       )
 
       // Apply cached mem-profile to sideloaded models, track those still pending
       var sideloadedEntries: [CatalogEntry] = []
       var needsProfile: [(id: String, path: String)] = []
-      for (entry, paths) in sideloaded {
+      var seenSideloadedIds: Set<String> = []
+
+      func addSideloaded(_ entry: CatalogEntry, _ paths: ResolvedPaths) {
         var entry = entry
         if let cached = MemProfileCache.get(modelId: entry.id) {
           entry.ctxBytesPer1kTokens = cached.ctxBytesPer1kTokens
@@ -550,7 +562,16 @@ class ModelManager: NSObject, URLSessionDataDelegate {
           needsProfile.append((id: entry.id, path: paths.modelFile))
         }
         allResolved[entry.id] = paths
-        sideloadedEntries.append(entry)
+        if seenSideloadedIds.insert(entry.id).inserted {
+          sideloadedEntries.append(entry)
+        }
+      }
+
+      for (entry, paths) in legacySideloaded.entries {
+        addSideloaded(entry, paths)
+      }
+      for (entry, paths) in hfSideloaded {
+        addSideloaded(entry, paths)
       }
 
       // 4. Build downloaded models list from resolved paths
@@ -1363,6 +1384,13 @@ class ModelManager: NSObject, URLSessionDataDelegate {
 
   private func postDownloadsDidChange() {
     NotificationCenter.default.post(name: .LBModelDownloadsDidChange, object: self)
+  }
+}
+
+private extension CatalogEntry {
+  func hasServerArg(_ name: String) -> Bool {
+    let needle = "--\(name)"
+    return serverArgs.contains(needle)
   }
 }
 
