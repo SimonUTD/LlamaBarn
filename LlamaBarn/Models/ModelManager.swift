@@ -849,10 +849,11 @@ class ModelManager: NSObject, URLSessionDataDelegate {
         self.logger.error("Model download failed: \(error.localizedDescription)")
 
         // Retry transient network errors (partial file is the resume state).
-        if let originalURL = task.originalRequest?.url,
-          self.shouldRetry(error: nsError, url: originalURL)
+        let retryURL = writer?.url ?? task.originalRequest?.url
+        if let retryURL,
+          self.shouldRetry(error: nsError, url: retryURL)
         {
-          self.scheduleRetry(url: originalURL, modelId: modelId)
+          self.scheduleRetry(url: retryURL, modelId: modelId)
           return
         }
 
@@ -869,8 +870,8 @@ class ModelManager: NSObject, URLSessionDataDelegate {
         }
 
         // Clear retry state on final failure.
-        if let originalURL = task.originalRequest?.url {
-          self.retryAttempts.removeValue(forKey: originalURL)
+        if let retryURL {
+          self.retryAttempts.removeValue(forKey: retryURL)
         }
       }
       return
@@ -1351,12 +1352,10 @@ class ModelManager: NSObject, URLSessionDataDelegate {
   }
 
   /// Creates a URLRequest for the given URL, adding an Authorization header
-  /// with the user's Hugging Face token when downloading from huggingface.co.
+  /// with the user's Hugging Face token when downloading from Hugging Face.
   private func makeRequest(for url: URL) -> URLRequest {
-    var request = URLRequest(url: url)
-    if url.host?.hasSuffix("huggingface.co") == true,
-      let token = UserSettings.hfToken
-    {
+    var request = URLRequest(url: UserSettings.mirroredHuggingFaceURL(url))
+    if UserSettings.isHuggingFaceURL(url), let token = UserSettings.hfToken {
       request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
     return request

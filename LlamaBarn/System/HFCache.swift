@@ -192,7 +192,7 @@ enum HFCache {
     var results: [URL: FileMetadata] = [:]
 
     for url in urls {
-      var request = URLRequest(url: url)
+      var request = URLRequest(url: UserSettings.mirroredHuggingFaceURL(url))
       request.httpMethod = "HEAD"
       if let token {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

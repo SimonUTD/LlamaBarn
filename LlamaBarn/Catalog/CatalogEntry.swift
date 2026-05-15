@@ -145,12 +145,13 @@ struct CatalogEntry: Identifiable {
       let user = components[1]
       let repo = components[2]
       if let url = URL(string: "https://huggingface.co/\(user)/\(repo)") {
-        return url
+        return UserSettings.mirroredHuggingFaceURL(url)
       }
     }
     // Fallback to the root of the download URL if parsing fails
-    return downloadUrl.deletingLastPathComponent().deletingLastPathComponent()
+    let fallback = downloadUrl.deletingLastPathComponent().deletingLastPathComponent()
       .deletingLastPathComponent()
+    return UserSettings.mirroredHuggingFaceURL(fallback)
   }
 
   /// The legacy flat-directory path for the mmproj file, if applicable.

@@ -167,7 +167,10 @@ enum HFRepoResolver {
     // `?blobs=true` asks HF to populate `siblings[].size` alongside filenames.
     // Without it, many responses omit sizes and we'd have to HEAD every
     // candidate just to rank them.
-    guard let url = URL(string: "https://huggingface.co/api/models/\(repo)?blobs=true") else {
+    guard let url = UserSettings.huggingFaceURL(
+      path: "/api/models/\(repo)",
+      queryItems: [URLQueryItem(name: "blobs", value: "true")]
+    ) else {
       throw ResolveError.repoNotFound(repo)
     }
     var req = URLRequest(url: url)

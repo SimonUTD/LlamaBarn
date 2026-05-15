@@ -38,6 +38,7 @@ enum UserSettings {
     static let sleepIdleTime = "sleepIdleTime"
     static let selectedCtxTiers = "selectedCtxTiers"
     static let hfCacheDirectory = "hfCacheDirectory"
+    static let hfMirrorBaseURL = "hfMirrorBaseURL"
     static let hfToken = "hfToken"
     static let cacheTypeK = "cacheTypeK"
     static let cacheTypeV = "cacheTypeV"
@@ -179,6 +180,92 @@ enum UserSettings {
   /// Whether a custom HF cache directory is configured
   static var hasCustomHFCacheDirectory: Bool {
     defaults.string(forKey: Keys.hfCacheDirectory) != nil
+  }
+
+  // MARK: - Hugging Face Endpoint
+
+  static let defaultHuggingFaceBaseURL = URL(string: "https://huggingface.co")!
+
+  static var hfMirrorBaseURL: URL? {
+    get {
+      guard let value = defaults.string(forKey: Keys.hfMirrorBaseURL) else { return nil }
+      return normalizeHuggingFaceBaseURL(value)
+    }
+    set {
+      let current = defaults.string(forKey: Keys.hfMirrorBaseURL)
+      guard current != newValue?.absoluteString else { return }
+      if let newValue {
+        defaults.set(newValue.absoluteString, forKey: Keys.hfMirrorBaseURL)
+      } else {
+        defaults.removeObject(forKey: Keys.hfMirrorBaseURL)
+      }
+      NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
+    }
+  }
+
+  static var effectiveHuggingFaceBaseURL: URL {
+    hfMirrorBaseURL ?? defaultHuggingFaceBaseURL
+  }
+
+  static var hfMirrorText: String {
+    get { hfMirrorBaseURL?.absoluteString ?? "" }
+    set { hfMirrorBaseURL = normalizeHuggingFaceBaseURL(newValue) }
+  }
+
+  static func isHuggingFaceURL(_ url: URL) -> Bool {
+    url.host?.lowercased() == defaultHuggingFaceBaseURL.host
+  }
+
+  static func mirroredHuggingFaceURL(_ url: URL) -> URL {
+    guard isHuggingFaceURL(url), let mirror = hfMirrorBaseURL else { return url }
+    guard var mirrorComponents = URLComponents(url: mirror, resolvingAgainstBaseURL: false),
+      let originalComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    else { return url }
+
+    mirrorComponents.path = joinedPath(base: mirrorComponents.path, suffix: originalComponents.path)
+    mirrorComponents.query = originalComponents.query
+    mirrorComponents.fragment = originalComponents.fragment
+    return mirrorComponents.url ?? url
+  }
+
+  static func huggingFaceURL(path: String, queryItems: [URLQueryItem]? = nil) -> URL? {
+    guard var components = URLComponents(
+      url: defaultHuggingFaceBaseURL, resolvingAgainstBaseURL: false)
+    else { return nil }
+    components.path = path.hasPrefix("/") ? path : "/\(path)"
+    components.queryItems = queryItems
+    return components.url.map(mirroredHuggingFaceURL)
+  }
+
+  static func normalizeHuggingFaceBaseURL(_ rawValue: String) -> URL? {
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    guard !trimmed.isEmpty else { return nil }
+
+    let value =
+      trimmed.contains("://")
+      ? trimmed
+      : "https://\(trimmed)"
+    guard var components = URLComponents(string: value),
+      let scheme = components.scheme?.lowercased(),
+      scheme == "http" || scheme == "https",
+      components.host?.isEmpty == false
+    else { return nil }
+
+    components.scheme = scheme
+    components.query = nil
+    components.fragment = nil
+    if components.path == "/" {
+      components.path = ""
+    }
+    return components.url
+  }
+
+  private static func joinedPath(base: String, suffix: String) -> String {
+    let normalizedBase = base == "/" ? "" : base
+    if normalizedBase.isEmpty { return suffix }
+    if suffix.isEmpty || suffix == "/" { return normalizedBase }
+    return normalizedBase + (suffix.hasPrefix("/") ? suffix : "/\(suffix)")
   }
 
   // MARK: - Server Performance

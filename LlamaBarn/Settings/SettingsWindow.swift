@@ -68,6 +68,7 @@ struct SettingsView: View {
   @State private var cacheTypeV = UserSettings.cacheTypeV
   @State private var flashAttentionEnabled = UserSettings.flashAttentionEnabled
   @State private var hfCacheDir = UserSettings.hfCacheDirectory
+  @State private var hfMirrorText = UserSettings.hfMirrorText
   @State private var hfToken = UserSettings.hfToken ?? ""
   @State private var showingHFTokenSheet = false
   @State private var portText: String = {
@@ -231,6 +232,28 @@ struct SettingsView: View {
       // Optional HF access token section
       Section {
         VStack(alignment: .leading, spacing: 8) {
+          HStack {
+            Text("HF mirror")
+            Spacer()
+            TextField("https://hf-mirror.com", text: $hfMirrorText)
+              .textFieldStyle(.automatic)
+              .frame(width: 220)
+              .onSubmit {
+                UserSettings.hfMirrorText = hfMirrorText
+                hfMirrorText = UserSettings.hfMirrorText
+              }
+              .onChange(of: hfMirrorText) { _, newValue in
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty || UserSettings.normalizeHuggingFaceBaseURL(trimmed) != nil {
+                  UserSettings.hfMirrorText = trimmed
+                }
+              }
+          }
+
+          Text("Blank uses official.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+
           HStack {
             Text("Hugging Face Token")
             Spacer()
