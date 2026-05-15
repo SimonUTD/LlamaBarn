@@ -70,6 +70,11 @@ struct SettingsView: View {
   @State private var hfCacheDir = UserSettings.hfCacheDirectory
   @State private var hfToken = UserSettings.hfToken ?? ""
   @State private var showingHFTokenSheet = false
+  @State private var portText: String = {
+    let port = UserSettings.effectivePort ?? LlamaServer.defaultPort
+    return String(port)
+  }()
+  private var portLockedByCLI: Bool { UserSettings.cliPort != nil }
 
   var body: some View {
     Form {
@@ -104,6 +109,29 @@ struct SettingsView: View {
           }
 
           Text("Automatically unloads the model from memory when not in use.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      // Port section
+      Section {
+        VStack(alignment: .leading, spacing: 8) {
+          HStack {
+            Text("Port")
+            Spacer()
+            TextField("", text: $portText)
+              .textFieldStyle(.automatic)
+              .frame(width: 80)
+              .disabled(portLockedByCLI)
+              .onChange(of: portText) { _, newValue in
+                if let port = Int(newValue), port >= 1 && port <= 65535 {
+                  UserSettings.webUiPort = port
+                }
+              }
+          }
+
+          Text(portLockedByCLI ? "Locked by launch arg." : "Server port.")
             .font(.callout)
             .foregroundStyle(.secondary)
         }

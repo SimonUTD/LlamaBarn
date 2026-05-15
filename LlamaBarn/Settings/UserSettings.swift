@@ -42,6 +42,7 @@ enum UserSettings {
     static let cacheTypeK = "cacheTypeK"
     static let cacheTypeV = "cacheTypeV"
     static let flashAttention = "flashAttention"
+    static let webUiPort = "webUiPort"
   }
 
   private static let defaults = UserDefaults.standard
@@ -245,5 +246,54 @@ enum UserSettings {
     return token.hasPrefix("hf_")
       && token.count > 3
       && token.dropFirst(3).allSatisfy { $0.isLetter || $0.isNumber }
+  }
+
+  /// Port override from `--web-ui-port` command-line argument, parsed once at launch.
+  /// When set, takes precedence over `webUiPort` and the Settings UI is disabled.
+  static let cliPort: Int? = {
+    let args = ProcessInfo.processInfo.arguments
+    for (idx, arg) in args.enumerated() {
+      let rawPort: String?
+      if arg == "--web-ui-port", idx + 1 < args.count {
+        rawPort = args[idx + 1]
+      } else if arg.hasPrefix("--web-ui-port=") {
+        rawPort = String(arg.dropFirst("--web-ui-port=".count))
+      } else if arg.hasPrefix("--web-ui-port ") {
+        rawPort = String(arg.dropFirst("--web-ui-port ".count))
+      } else {
+        rawPort = nil
+      }
+
+      if let rawPort, let port = Int(rawPort), port >= 1 && port <= 65535 {
+        return port
+      }
+    }
+    return nil
+  }()
+
+  /// The port that should actually be used — CLI override wins, then user setting.
+  static var effectivePort: Int? {
+    cliPort ?? webUiPort
+  }
+
+  /// Optional custom port for llama-server. If nil, uses defaultPort (2276).
+  /// Must be in range 1-65535.
+  static var webUiPort: Int? {
+    get {
+      let value = defaults.integer(forKey: Keys.webUiPort)
+      // 0 is returned if key is missing, which is not a valid port
+      return value == 0 ? nil : value
+    }
+    set {
+      guard let newValue = newValue else {
+        defaults.removeObject(forKey: Keys.webUiPort)
+        NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
+        return
+      }
+      // Validate port range
+      guard newValue >= 1 && newValue <= 65535 else { return }
+      defaults.set(newValue, forKey: Keys.webUiPort)
+      NotificationCenter.default.post(name: .LBUserSettingsDidChange, object: nil)
+    }
   }
 }
