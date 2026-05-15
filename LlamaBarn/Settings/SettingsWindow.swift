@@ -293,8 +293,7 @@ struct SettingsView: View {
               .textFieldStyle(.automatic)
               .frame(width: 220)
               .onSubmit {
-                UserSettings.hfMirrorText = hfMirrorText
-                hfMirrorText = UserSettings.hfMirrorText
+                saveHFMirror()
               }
               .onChange(of: hfMirrorText) { _, newValue in
                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -302,6 +301,13 @@ struct SettingsView: View {
                   UserSettings.hfMirrorText = trimmed
                 }
               }
+
+            Button("Save") {
+              saveHFMirror()
+            }
+          }
+          .onDisappear {
+            saveHFMirror()
           }
 
           Text("Blank uses official.")
@@ -375,6 +381,15 @@ struct SettingsView: View {
       localModelDirs = UserSettings.localModelDirectories
       ModelManager.shared.refreshDownloadedModels()
     }
+  }
+
+  private func saveHFMirror() {
+    let trimmed = hfMirrorText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.isEmpty || UserSettings.normalizeHuggingFaceBaseURL(trimmed) != nil else {
+      return
+    }
+    UserSettings.hfMirrorText = trimmed
+    hfMirrorText = UserSettings.hfMirrorText
   }
 
   /// Truncated HF token for display -- e.g. "hf_...xyz1"

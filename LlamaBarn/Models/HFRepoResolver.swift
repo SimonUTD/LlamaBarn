@@ -451,6 +451,16 @@ enum HFRepoResolver {
       .split(separator: "/", omittingEmptySubsequences: false)
       .map { $0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }
       .joined(separator: "/")
-    return URL(string: "https://huggingface.co/\(repo)/resolve/main/\(encodedPath)")!
+    guard
+      var components = URLComponents(
+        url: UserSettings.defaultHuggingFaceBaseURL, resolvingAgainstBaseURL: false)
+    else {
+      preconditionFailure("Invalid Hugging Face base URL")
+    }
+    components.path = "/\(repo)/resolve/main/\(encodedPath)"
+    guard let url = components.url else {
+      preconditionFailure("Invalid Hugging Face resolve URL for \(repo)/\(path)")
+    }
+    return url
   }
 }

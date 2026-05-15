@@ -144,7 +144,10 @@ struct CatalogEntry: Identifiable {
     if components.count >= 3 {
       let user = components[1]
       let repo = components[2]
-      if let url = URL(string: "https://huggingface.co/\(user)/\(repo)") {
+      var urlComponents = URLComponents(
+        url: UserSettings.defaultHuggingFaceBaseURL, resolvingAgainstBaseURL: false)
+      urlComponents?.path = "/\(user)/\(repo)"
+      if let url = urlComponents?.url {
         return UserSettings.mirroredHuggingFaceURL(url)
       }
     }
