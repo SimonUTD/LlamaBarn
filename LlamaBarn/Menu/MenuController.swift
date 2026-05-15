@@ -361,9 +361,9 @@ final class MenuController: NSObject, NSMenuDelegate {
       menu.addItem(NSMenuItem.viewItem(with: descriptionView))
     }
 
-    // The catalog is canonical: every size the family offers is listed, with
-    // installed sizes marked by the row itself.
-    let validModels = family.selectableModels()
+    // The catalog is canonical: every size and quantization the family offers
+    // is listed, with installed variants marked by the row itself.
+    let validModels = family.catalogModels()
 
     for model in validModels {
       let view = ModelItemView(

@@ -160,6 +160,11 @@ extension Format {
       // File size
       result.append(NSAttributedString(string: model.totalSize, attributes: attributes))
 
+      if let quantization = model.quantizationLabel {
+        result.append(NSAttributedString(string: "  ∣  ", attributes: secondaryAttributes))
+        result.append(NSAttributedString(string: quantization, attributes: attributes))
+      }
+
       // Pipe separator
       result.append(NSAttributedString(string: "  ∣  ", attributes: secondaryAttributes))
 

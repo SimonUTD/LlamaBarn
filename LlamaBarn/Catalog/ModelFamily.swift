@@ -41,6 +41,10 @@ struct ModelFamily {
     }
   }
 
+  func catalogModels() -> [CatalogEntry] {
+    allModels.sorted(by: CatalogEntry.displayOrder(_:_:))
+  }
+
   func selectableModels() -> [CatalogEntry] {
     // Group by size (e.g., "27B") to pick the preferred version
     let modelsBySize = Dictionary(grouping: allModels, by: { $0.size })

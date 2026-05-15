@@ -107,8 +107,8 @@ struct CatalogEntry: Identifiable {
 
   /// Quantization label (e.g., "Q4") - nil if full precision or empty
   var quantizationLabel: String? {
-    guard !isFullPrecision else { return nil }
     let label = Format.quantization(quantization)
+    guard !["F16", "BF16", "FP16", "F32"].contains(label) else { return nil }
     return label.isEmpty ? nil : label
   }
 
