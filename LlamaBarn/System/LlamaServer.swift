@@ -188,6 +188,19 @@ class LlamaServer {
       ])
     }
 
+    let systemMemoryGb = Double(SystemMemory.memoryMb) / 1024.0
+    if systemMemoryGb >= 32.0 {
+      arguments.append(contentsOf: ["-ub", "2048"])
+    }
+
+    arguments.append(contentsOf: [
+      "-ctk", UserSettings.cacheTypeK.rawValue,
+      "-ctv", UserSettings.cacheTypeV.rawValue,
+    ])
+    if UserSettings.flashAttentionEnabled {
+      arguments.append(contentsOf: ["-fa", "on"])
+    }
+
     // All paths in models.ini are absolute, so CWD is mostly cosmetic —
     // but point it at Application Support so stray relative writes (if any) don't leak into $HOME.
     let workingDirectory = UserSettings.appSupportDir.path

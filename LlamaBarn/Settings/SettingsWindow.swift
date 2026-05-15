@@ -64,6 +64,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 struct SettingsView: View {
   @State private var launchAtLogin = LaunchAtLogin.isEnabled
   @State private var sleepIdleTime = UserSettings.sleepIdleTime
+  @State private var cacheTypeK = UserSettings.cacheTypeK
+  @State private var cacheTypeV = UserSettings.cacheTypeV
+  @State private var flashAttentionEnabled = UserSettings.flashAttentionEnabled
   @State private var hfCacheDir = UserSettings.hfCacheDirectory
   @State private var hfToken = UserSettings.hfToken ?? ""
   @State private var showingHFTokenSheet = false
@@ -101,6 +104,46 @@ struct SettingsView: View {
           }
 
           Text("Automatically unloads the model from memory when not in use.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      // Server performance section
+      Section {
+        VStack(alignment: .leading, spacing: 8) {
+          LabeledContent("KV cache K") {
+            Picker("", selection: $cacheTypeK) {
+              ForEach(UserSettings.CacheType.allCases, id: \.self) { cacheType in
+                Text(cacheType.displayName).tag(cacheType)
+              }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .onChange(of: cacheTypeK) { _, newValue in
+              UserSettings.cacheTypeK = newValue
+            }
+          }
+
+          LabeledContent("KV cache V") {
+            Picker("", selection: $cacheTypeV) {
+              ForEach(UserSettings.CacheType.allCases, id: \.self) { cacheType in
+                Text(cacheType.displayName).tag(cacheType)
+              }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .onChange(of: cacheTypeV) { _, newValue in
+              UserSettings.cacheTypeV = newValue
+            }
+          }
+
+          Toggle("Flash attention", isOn: $flashAttentionEnabled)
+            .onChange(of: flashAttentionEnabled) { _, newValue in
+              UserSettings.flashAttentionEnabled = newValue
+            }
+
+          Text("Lower cache precision saves memory.")
             .font(.callout)
             .foregroundStyle(.secondary)
         }
