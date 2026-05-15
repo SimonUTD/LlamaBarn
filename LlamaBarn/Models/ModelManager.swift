@@ -479,6 +479,7 @@ class ModelManager: NSObject, URLSessionDataDelegate {
   func refreshDownloadedModels() {
     let legacyDir = CatalogEntry.legacyStorageDir
     let hfCacheDir = UserSettings.hfCacheDirectory
+    let localModelDirs = UserSettings.localModelDirectories
     let allCatalogModels = Catalog.allModels()
 
     // Move directory reading to background queue to avoid blocking main thread
@@ -544,6 +545,12 @@ class ModelManager: NSObject, URLSessionDataDelegate {
         directory: legacyDir,
         knownFiles: legacyMatchedFiles
       )
+      let localSideloaded = localModelDirs.flatMap { directory in
+        guard directory.standardizedFileURL.path != legacyDir.standardizedFileURL.path else {
+          return [(entry: CatalogEntry, paths: ResolvedPaths)]()
+        }
+        return LegacyModelScanner.scanRecursively(directory: directory).entries
+      }
       let hfSideloaded = HFCache.scanForSideloaded(
         cacheDir: hfCacheDir, knownFiles: hfScan.matchedFiles
       )
@@ -554,6 +561,7 @@ class ModelManager: NSObject, URLSessionDataDelegate {
       var seenSideloadedIds: Set<String> = []
 
       func addSideloaded(_ entry: CatalogEntry, _ paths: ResolvedPaths) {
+        guard seenSideloadedIds.insert(entry.id).inserted else { return }
         var entry = entry
         if let cached = MemProfileCache.get(modelId: entry.id) {
           entry.ctxBytesPer1kTokens = cached.ctxBytesPer1kTokens
@@ -562,12 +570,13 @@ class ModelManager: NSObject, URLSessionDataDelegate {
           needsProfile.append((id: entry.id, path: paths.modelFile))
         }
         allResolved[entry.id] = paths
-        if seenSideloadedIds.insert(entry.id).inserted {
-          sideloadedEntries.append(entry)
-        }
+        sideloadedEntries.append(entry)
       }
 
       for (entry, paths) in legacySideloaded.entries {
+        addSideloaded(entry, paths)
+      }
+      for (entry, paths) in localSideloaded {
         addSideloaded(entry, paths)
       }
       for (entry, paths) in hfSideloaded {

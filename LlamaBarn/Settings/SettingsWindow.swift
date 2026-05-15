@@ -68,6 +68,7 @@ struct SettingsView: View {
   @State private var cacheTypeV = UserSettings.cacheTypeV
   @State private var flashAttentionEnabled = UserSettings.flashAttentionEnabled
   @State private var hfCacheDir = UserSettings.hfCacheDirectory
+  @State private var localModelDirs = UserSettings.localModelDirectories
   @State private var hfMirrorText = UserSettings.hfMirrorText
   @State private var hfToken = UserSettings.hfToken ?? ""
   @State private var showingHFTokenSheet = false
@@ -229,6 +230,59 @@ struct SettingsView: View {
             .foregroundStyle(.secondary)
         }
       }
+
+      // Local GGUF folders section
+      Section {
+        VStack(alignment: .leading, spacing: 8) {
+          HStack {
+            Text("Local folders")
+            Spacer()
+            Button("Add") {
+              chooseLocalModelFolders()
+            }
+            .font(.callout)
+            .controlSize(.small)
+            .fixedSize()
+          }
+
+          if localModelDirs.isEmpty {
+            Text("None")
+              .font(.callout)
+              .foregroundStyle(.secondary)
+          } else {
+            VStack(alignment: .leading, spacing: 4) {
+              ForEach(localModelDirs, id: \.path) { directory in
+                HStack(spacing: 6) {
+                  Text(abbreviatedPath(directory))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                  Spacer()
+
+                  Button {
+                    UserSettings.removeLocalModelDirectory(directory)
+                    localModelDirs = UserSettings.localModelDirectories
+                    ModelManager.shared.refreshDownloadedModels()
+                  } label: {
+                    Image(systemName: "minus.circle")
+                  }
+                  .buttonStyle(.borderless)
+                  .accessibilityLabel("Remove")
+                  .help("Remove")
+                  .fixedSize()
+                }
+              }
+            }
+          }
+
+          Text("Scans GGUF files.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+      }
       // Optional HF access token section
       Section {
         VStack(alignment: .leading, spacing: 8) {
@@ -303,6 +357,22 @@ struct SettingsView: View {
     if panel.runModal() == .OK, let url = panel.url {
       UserSettings.hfCacheDirectory = url
       hfCacheDir = url
+      ModelManager.shared.refreshDownloadedModels()
+    }
+  }
+
+  private func chooseLocalModelFolders() {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.canCreateDirectories = false
+    panel.allowsMultipleSelection = true
+    panel.message = "Choose GGUF folders"
+    panel.prompt = "Add"
+
+    if panel.runModal() == .OK {
+      UserSettings.addLocalModelDirectories(panel.urls)
+      localModelDirs = UserSettings.localModelDirectories
       ModelManager.shared.refreshDownloadedModels()
     }
   }

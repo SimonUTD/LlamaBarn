@@ -13,7 +13,12 @@ enum LegacyModelScanner {
     let fields: [String: String]
   }
 
-  static func scan(directory: URL, knownFiles: Set<String>) -> ScanResult {
+  static func scan(
+    directory: URL,
+    knownFiles: Set<String>,
+    idPrefix: String = "legacy",
+    includeAppSupportModelsIni: Bool = true
+  ) -> ScanResult {
     let fm = FileManager.default
     guard let files = try? fm.contentsOfDirectory(atPath: directory.path) else {
       return ScanResult(entries: [])
@@ -24,10 +29,13 @@ enum LegacyModelScanner {
     var usedIds: Set<String> = []
     var results: [(entry: CatalogEntry, paths: ResolvedPaths)] = []
 
-    let iniURLs = [
-      directory.appendingPathComponent("models.ini"),
-      UserSettings.appSupportDir.appendingPathComponent("models.ini"),
-    ]
+    let iniURLs =
+      includeAppSupportModelsIni
+      ? [
+        directory.appendingPathComponent("models.ini"),
+        UserSettings.appSupportDir.appendingPathComponent("models.ini"),
+      ]
+      : [directory.appendingPathComponent("models.ini")]
 
     for iniURL in iniURLs {
       for iniEntry in parseModelsIni(at: iniURL) {
@@ -79,7 +87,7 @@ enum LegacyModelScanner {
 
     for filename in standaloneFiles {
       let modelURL = directory.appendingPathComponent(filename)
-      let id = uniqueId(genericId(for: filename), used: &usedIds)
+      let id = uniqueId(genericId(for: filename, idPrefix: idPrefix), used: &usedIds)
       if let result = buildEntry(
         id: id,
         modelURL: modelURL,
@@ -98,7 +106,7 @@ enum LegacyModelScanner {
       guard let firstShard = sorted.first, HFRepoParser.isFirstShard(firstShard) else { continue }
       let modelURL = directory.appendingPathComponent(firstShard)
       let additional = sorted.dropFirst().map { directory.appendingPathComponent($0) }
-      let id = uniqueId(genericId(for: firstShard), used: &usedIds)
+      let id = uniqueId(genericId(for: firstShard, idPrefix: idPrefix), used: &usedIds)
       if let result = buildEntry(
         id: id,
         modelURL: modelURL,
@@ -113,6 +121,45 @@ enum LegacyModelScanner {
     }
 
     return ScanResult(entries: results)
+  }
+
+  static func scanRecursively(directory: URL) -> ScanResult {
+    let fm = FileManager.default
+    guard
+      let enumerator = fm.enumerator(
+        at: directory,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsPackageDescendants]
+      )
+    else { return ScanResult(entries: []) }
+
+    var modelDirectories: Set<String> = []
+    for case let url as URL in enumerator {
+      guard isGGUF(url.lastPathComponent), !isLikelyMmproj(url.lastPathComponent) else { continue }
+      modelDirectories.insert(url.deletingLastPathComponent().standardizedFileURL.path)
+    }
+
+    let entries = modelDirectories.sorted().flatMap { path in
+      let modelDirectory = URL(fileURLWithPath: path, isDirectory: true)
+      return scan(
+        directory: modelDirectory,
+        knownFiles: [],
+        idPrefix: localIdPrefix(for: modelDirectory),
+        includeAppSupportModelsIni: false
+      ).entries
+    }
+
+    return ScanResult(entries: entries)
+  }
+
+  static func localIdPrefix(for directory: URL) -> String {
+    let path = directory.standardizedFileURL.path
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in path.utf8 {
+      hash ^= UInt64(byte)
+      hash &*= 1_099_511_628_211
+    }
+    return String(format: "local/%016llx", hash)
   }
 
   private static func buildEntry(
@@ -285,7 +332,7 @@ enum LegacyModelScanner {
     return candidate
   }
 
-  private static func genericId(for filename: String) -> String {
+  private static func genericId(for filename: String, idPrefix: String) -> String {
     let base = baseModelName(from: filename)
     let slug = base.lowercased()
       .components(separatedBy: CharacterSet.alphanumerics.inverted)
@@ -295,7 +342,7 @@ enum LegacyModelScanner {
       GGUFQuantLabel.parse(filename)
       ?? HFRepoParser.parseQuant(filename: filename)
       ?? "unknown"
-    return "legacy/\(slug.isEmpty ? "model" : slug):\(quant)"
+    return "\(idPrefix)/\(slug.isEmpty ? "model" : slug):\(quant)"
   }
 
   private struct Metadata {

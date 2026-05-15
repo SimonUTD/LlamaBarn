@@ -39,6 +39,7 @@ enum UserSettings {
     static let selectedCtxTiers = "selectedCtxTiers"
     static let hfCacheDirectory = "hfCacheDirectory"
     static let hfMirrorBaseURL = "hfMirrorBaseURL"
+    static let localModelDirectories = "localModelDirectories"
     static let hfToken = "hfToken"
     static let cacheTypeK = "cacheTypeK"
     static let cacheTypeV = "cacheTypeV"
@@ -182,6 +183,36 @@ enum UserSettings {
     defaults.string(forKey: Keys.hfCacheDirectory) != nil
   }
 
+  // MARK: - Local Model Directories
+
+  static var localModelDirectories: [URL] {
+    get {
+      uniqueStandardizedDirectories(
+        defaults.stringArray(forKey: Keys.localModelDirectories)?
+          .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? []
+      )
+    }
+    set {
+      let directories = uniqueStandardizedDirectories(newValue)
+      let paths = directories.map(\.path)
+      guard defaults.stringArray(forKey: Keys.localModelDirectories) != paths else { return }
+      if paths.isEmpty {
+        defaults.removeObject(forKey: Keys.localModelDirectories)
+      } else {
+        defaults.set(paths, forKey: Keys.localModelDirectories)
+      }
+    }
+  }
+
+  static func addLocalModelDirectories(_ directories: [URL]) {
+    localModelDirectories = localModelDirectories + directories
+  }
+
+  static func removeLocalModelDirectory(_ directory: URL) {
+    let target = directory.standardizedFileURL.path
+    localModelDirectories = localModelDirectories.filter { $0.standardizedFileURL.path != target }
+  }
+
   // MARK: - Hugging Face Endpoint
 
   static let defaultHuggingFaceBaseURL = URL(string: "https://huggingface.co")!
@@ -266,6 +297,18 @@ enum UserSettings {
     if normalizedBase.isEmpty { return suffix }
     if suffix.isEmpty || suffix == "/" { return normalizedBase }
     return normalizedBase + (suffix.hasPrefix("/") ? suffix : "/\(suffix)")
+  }
+
+  private static func uniqueStandardizedDirectories(_ directories: [URL]) -> [URL] {
+    var seen: Set<String> = []
+    var result: [URL] = []
+    for directory in directories {
+      let standardized = directory.standardizedFileURL
+      let path = standardized.path
+      guard !path.isEmpty, seen.insert(path).inserted else { continue }
+      result.append(standardized)
+    }
+    return result
   }
 
   // MARK: - Server Performance
