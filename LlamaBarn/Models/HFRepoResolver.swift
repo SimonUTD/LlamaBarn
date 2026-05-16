@@ -97,7 +97,7 @@ enum HFRepoResolver {
     // Up-front validation: a malformed but present quant is a hard reject.
     // Otherwise a tampered link could silently install a different file by
     // falling through to default-quant resolution.
-    if let quant, GGUFQuantLabel.parse(quant) == nil {
+    if let quant, GGUFQuantLabel.parse(quant) == nil && !isSafeQuantToken(quant) {
       throw ResolveError.invalidQuant(quant)
     }
 
@@ -224,9 +224,12 @@ enum HFRepoResolver {
 
     // 1. Explicit quant: match any sibling whose parsed label == requested.
     if let requested = requestedQuant {
+      let requestedLabel = GGUFQuantLabel.parse(requested) ?? requested.uppercased()
       let matches = allGgufs.filter { sib in
-        guard let label = GGUFQuantLabel.parse(sib.rfilename) else { return false }
-        return GGUFQuantLabel.matches(label, requested)
+        if let label = GGUFQuantLabel.parse(sib.rfilename) {
+          return GGUFQuantLabel.matches(label, requestedLabel)
+        }
+        return sib.rfilename.uppercased().contains(requestedLabel)
       }
       guard let picked = largest(matches, siblings: siblings, repo: repo) else {
         throw ResolveError.quantNotFound(repo: repo, quant: requested)
@@ -442,6 +445,10 @@ enum HFRepoResolver {
 
   private static func isGgufCandidate(_ path: String) -> Bool {
     path.lowercased().hasSuffix(".gguf")
+  }
+
+  private static func isSafeQuantToken(_ value: String) -> Bool {
+    value.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil
   }
 
   private static func resolveUrl(repo: String, path: String) -> URL {

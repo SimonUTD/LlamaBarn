@@ -151,27 +151,81 @@ class ModelManager: NSObject, URLSessionDataDelegate {
     // HF cache is the only download destination; if metadata fetch fails, we abort —
     // there's no legacy flat fallback anymore.
     Task {
-      let plan = await self.fetchHFDownloadPlan(for: model)
+      var downloadModel = model
+      var downloadFiles = filesToDownload
+      var plan = await self.fetchHFDownloadPlan(for: downloadModel)
+
+      if plan == nil,
+        let resolvedModel = await self.resolveCatalogDownloadEntry(for: model)
+      {
+        let preparedFiles: [URL]? = await MainActor.run {
+          do {
+            let prepared = try self.prepareDownload(for: resolvedModel)
+            guard !prepared.isEmpty else { return [] }
+            self.replaceActiveDownloadModel(modelId: modelId, with: resolvedModel)
+            return prepared
+          } catch {
+            self.failDownloadStart(modelId: modelId, model: model, message: error.localizedDescription)
+            return nil
+          }
+        }
+        guard let preparedFiles else { return }
+        guard !preparedFiles.isEmpty else {
+          await MainActor.run {
+            self.tearDownActiveDownload(modelId: modelId, outcome: .discard)
+            self.refreshDownloadedModels()
+          }
+          return
+        }
+
+        downloadModel = resolvedModel
+        downloadFiles = preparedFiles
+        plan = await self.fetchHFDownloadPlan(for: downloadModel)
+      }
+
       await MainActor.run {
         guard let plan else {
-          self.logger.error("HF metadata fetch failed for \(model.displayName); aborting download")
-          self.tearDownActiveDownload(modelId: modelId, outcome: .pause)
-          NotificationCenter.default.post(
-            name: .LBModelDownloadDidFail,
-            object: self,
-            userInfo: [
-              "model": model,
-              "error":
-                "Couldn't reach Hugging Face to start the download. This is usually a temporary rate limit or outage — try again in a few minutes, or set a Hugging Face token in Settings to lift the limit.",
-            ]
+          self.logger.error(
+            "HF metadata fetch failed for \(downloadModel.displayName); aborting download")
+          self.failDownloadStart(
+            modelId: modelId,
+            model: downloadModel,
+            message:
+              "Couldn't reach Hugging Face to start the download. This is usually a temporary rate limit, outage, or stale catalog URL — try again in a few minutes, or set a Hugging Face token in Settings."
           )
           return
         }
         self.downloadPlans[modelId] = plan
-        self.logger.info("HF download plan ready for \(model.displayName): \(plan.repoDir)")
-        self.startDownloadTasks(model: model, files: filesToDownload)
+        self.logger.info("HF download plan ready for \(downloadModel.displayName): \(plan.repoDir)")
+        self.startDownloadTasks(model: downloadModel, files: downloadFiles)
       }
     }
+  }
+
+  private func replaceActiveDownloadModel(modelId: String, with model: CatalogEntry) {
+    guard let current = activeDownloads[modelId] else { return }
+    let totalUnitCount = max(remainingBytesRequired(for: model), 1)
+    let progress = Progress(totalUnitCount: totalUnitCount)
+    progress.completedUnitCount = min(current.progress.completedUnitCount, totalUnitCount)
+    activeDownloads[modelId] = ActiveDownload(
+      model: model,
+      progress: progress,
+      tasks: current.tasks,
+      completedFilesBytes: current.completedFilesBytes
+    )
+    postDownloadsDidChange()
+  }
+
+  private func failDownloadStart(modelId: String, model: CatalogEntry, message: String) {
+    tearDownActiveDownload(modelId: modelId, outcome: .pause)
+    NotificationCenter.default.post(
+      name: .LBModelDownloadDidFail,
+      object: self,
+      userInfo: [
+        "model": model,
+        "error": message,
+      ]
+    )
   }
 
   /// Starts URLSession data tasks for the given files.
@@ -306,6 +360,42 @@ class ModelManager: NSObject, URLSessionDataDelegate {
     }
 
     return HFDownloadPlan(repoDir: repoDir, commit: commit, blobHashes: blobHashes)
+  }
+
+  /// Resolves a catalog model against the live HF repo listing when the curated
+  /// URL no longer returns metadata. This protects downloads from stale or
+  /// mistyped catalog filenames while keeping the catalog's stable model ID.
+  private nonisolated func resolveCatalogDownloadEntry(for model: CatalogEntry) async
+    -> CatalogEntry?
+  {
+    guard !model.isSideloaded,
+      let repo = HFCache.repoId(from: model.downloadUrl)
+    else { return nil }
+
+    let token = await MainActor.run { UserSettings.hfToken }
+    let systemMemoryMb = await MainActor.run { SystemMemory.memoryMb }
+    let catalog = await MainActor.run { Catalog.allModels() }
+
+    do {
+      let resolved = try await HFRepoResolver.resolve(
+        repo: repo,
+        quant: model.quantization,
+        catalog: catalog,
+        systemMemoryMb: systemMemoryMb,
+        token: token
+      )
+      let fileSize = resolved.approximateBytes > 0 ? resolved.approximateBytes : model.fileSize
+      return model.withRemoteFiles(
+        downloadUrl: resolved.mainUrl,
+        additionalParts: resolved.additionalParts.isEmpty ? nil : resolved.additionalParts,
+        mmprojUrl: resolved.mmprojUrl,
+        fileSize: fileSize
+      )
+    } catch {
+      Logger(subsystem: Logging.subsystem, category: "ModelManager").error(
+        "Live HF resolution failed for \(repo) \(model.quantization): \(error.localizedDescription)")
+      return nil
+    }
   }
 
   /// Gets the current status of a model.

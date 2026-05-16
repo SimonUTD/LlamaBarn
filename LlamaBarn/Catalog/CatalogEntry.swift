@@ -112,6 +112,36 @@ struct CatalogEntry: Identifiable {
     return label.isEmpty ? nil : label
   }
 
+  func withRemoteFiles(
+    downloadUrl: URL,
+    additionalParts: [URL]?,
+    mmprojUrl: URL?,
+    fileSize: Int64
+  ) -> CatalogEntry {
+    CatalogEntry(
+      id: id,
+      family: family,
+      parameterCount: parameterCount,
+      size: size,
+      ctxWindow: ctxWindow,
+      fileSize: fileSize,
+      ctxBytesPer1kTokens: ctxBytesPer1kTokens,
+      residentBytes: residentBytes,
+      overheadMultiplier: overheadMultiplier,
+      downloadUrl: downloadUrl,
+      additionalParts: additionalParts,
+      mmprojUrl: mmprojUrl,
+      mmprojLocalFilename: mmprojLocalFilename,
+      serverArgs: serverArgs,
+      icon: icon,
+      quantization: quantization,
+      isFullPrecision: isFullPrecision,
+      isSideloaded: isSideloaded,
+      org: org,
+      tags: tags
+    )
+  }
+
   /// Total size including all model files
   var totalSize: String {
     Format.gigabytes(fileSize)

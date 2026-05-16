@@ -36,6 +36,15 @@ enum HFCache {
     return "models--\(org)--\(repo)"
   }
 
+  /// Parses a HF download URL and returns the repo id (`org/repo`).
+  static func repoId(from url: URL) -> String? {
+    let components = url.pathComponents
+    guard components.count >= 4,
+      components[3] == "resolve"
+    else { return nil }
+    return "\(components[1])/\(components[2])"
+  }
+
   /// The repo-relative path a HF download URL points at (everything past
   /// `resolve/{branch}/`), preserving subdir structure. e.g.
   /// `https://huggingface.co/org/repo/resolve/main/Q4_K_M/model.gguf`
