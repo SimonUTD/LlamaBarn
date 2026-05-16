@@ -43,16 +43,10 @@ enum Format {
 
   // MARK: - Quantization Formatting
 
-  /// Extracts the first segment of a quantization label for compact display.
-  /// Examples: "Q4_K_M" → "Q4", "Q8_0" → "Q8", "F16" → "F16"
+  /// Normalizes a quantization label for display.
+  /// Examples: "Q4_K_M" → "Q4_K_M", "IQ2_XXS" → "IQ2_XXS"
   static func quantization(_ label: String) -> String {
-    let upper = label.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    guard !upper.isEmpty else { return upper }
-    if let idx = upper.firstIndex(where: { $0 == "_" || $0 == "-" }) {
-      let prefix = upper[..<idx]
-      if !prefix.isEmpty { return String(prefix) }
-    }
-    return upper
+    label.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
   }
 
   // MARK: - Progress Formatting
@@ -284,11 +278,15 @@ extension Format {
         Format.symbol(
           "eyeglasses", pointSize: Theme.Fonts.primary.pointSize, color: sizeColor))
     }
-    if quantization != nil {
+    if let quantization {
       result.append(NSAttributedString(string: " "))
       result.append(
         Format.symbol(
           "q.square", pointSize: Theme.Fonts.primary.pointSize, color: Theme.Colors.textSecondary))
+      result.append(
+        NSAttributedString(
+          string: " \(quantization)",
+          attributes: Theme.primaryAttributes(color: Theme.Colors.textSecondary)))
     }
 
     // Apply a paragraph style that disables letter-spacing tightening before truncation.

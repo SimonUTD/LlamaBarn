@@ -114,37 +114,41 @@ enum HFRepoResolver {
       siblings: siblings, catalog: catalog, budgetMb: budgetMb
     )
 
-    // Expand shards + attach mmproj.
-    let shards = try expandShards(main: pick.rfilename, siblings: siblings, repo: repo)
-    let mmproj = pickMmproj(repo: repo, siblings: siblings, catalog: catalog)
+    return try resolved(repo: repo, pick: pick, siblings: siblings, catalog: catalog)
+  }
 
-    // Aggregate size (main + shards + mmproj), dropping unknown entries.
-    var allPicked: [String] = shards  // includes the main shard at index 0
-    if let m = mmproj { allPicked.append(m.rfilename) }
-    let sizeByPath: [String: Int64] = Dictionary(
-      uniqueKeysWithValues: siblings.map { ($0.rfilename, $0.size ?? 0) })
-    var approxBytes: Int64 = 0
-    for path in allPicked {
-      approxBytes += sizeByPath[path] ?? 0
+  /// Lists every runnable quantization variant that exists in the live HF repo.
+  /// The catalog remains the display metadata source; this method only supplies
+  /// actual remote files so the UI can expose Q2/Q3/IQ/etc. without guessing URLs.
+  static func listQuantizedFiles(
+    repo: String,
+    catalog: [CatalogEntry],
+    token: String?
+  ) async throws -> [Resolved] {
+    let siblings = try await fetchSiblings(repo: repo, token: token)
+    guard !siblings.isEmpty else {
+      throw ResolveError.noGgufFiles(repo)
     }
 
-    let org = String(repo.split(separator: "/")[0])
-    let name = String(repo.split(separator: "/")[1])
-    let modelId = "\(org)/\(name):\(pick.quant)"
+    let candidates = siblings.filter { sibling in
+      isRunnableGgufCandidate(sibling.rfilename) && quantLabel(for: sibling.rfilename) != nil
+    }
+    guard !candidates.isEmpty else { throw ResolveError.noGgufFiles(repo) }
 
-    let mainUrl = resolveUrl(repo: repo, path: pick.rfilename)
-    let extraUrls = shards.dropFirst().map { resolveUrl(repo: repo, path: $0) }
-    let mmprojUrl = mmproj.map { resolveUrl(repo: repo, path: $0.rfilename) }
+    let byQuant = Dictionary(grouping: candidates) { sibling in
+      quantLabel(for: sibling.rfilename)!.uppercased()
+    }
 
-    return Resolved(
-      modelId: modelId,
-      repo: repo,
-      quant: pick.quant,
-      mainUrl: mainUrl,
-      additionalParts: Array(extraUrls),
-      mmprojUrl: mmprojUrl,
-      approximateBytes: approxBytes
-    )
+    var resolvedModels: [Resolved] = []
+    for quant in byQuant.keys.sorted() {
+      guard let matches = byQuant[quant],
+        let picked = largest(matches, siblings: siblings, repo: repo)
+      else { continue }
+      let pick = Pick(rfilename: picked.rfilename, quant: quant)
+      resolvedModels.append(try resolved(repo: repo, pick: pick, siblings: siblings, catalog: catalog))
+    }
+
+    return resolvedModels.sorted(by: compareResolvedOptions(_:_:))
   }
 
   // MARK: - HF API
@@ -275,13 +279,7 @@ enum HFRepoResolver {
     // of a sharded set. For sharded quants, compatibility uses the sum of all
     // shard sizes when HF provided per-shard sizes; otherwise we fall back to
     // the first shard's size.
-    let selectable = allGgufs.filter { sib in
-      let name = (sib.rfilename as NSString).lastPathComponent
-      if name.lowercased().hasPrefix("mmproj") { return false }
-      if name.lowercased().contains("imatrix") { return false }
-      if HFRepoParser.isSplitShard(name) && !HFRepoParser.isFirstShard(name) { return false }
-      return true
-    }
+    let selectable = allGgufs.filter { isRunnableGgufCandidate($0.rfilename) }
     guard !selectable.isEmpty else { throw ResolveError.noGgufFiles(repo) }
 
     let compatible = selectable.filter {
@@ -306,10 +304,7 @@ enum HFRepoResolver {
     guard let best = preferred ?? largest(compatible, siblings: siblings, repo: repo) else {
       throw ResolveError.noCompatibleFile(repo: repo)
     }
-    let label =
-      GGUFQuantLabel.parse(best.rfilename)
-      ?? HFRepoParser.parseQuant(filename: (best.rfilename as NSString).lastPathComponent)
-      ?? "unknown"
+    let label = quantLabel(for: best.rfilename) ?? "unknown"
     return Pick(
       rfilename: best.rfilename,
       quant: label.uppercased())
@@ -360,6 +355,41 @@ enum HFRepoResolver {
     guard let bytes, bytes > 0 else { return true }  // unknown size → don't filter out
     let mb = Double(bytes) / 1_048_576.0 * 1.05
     return mb <= budgetMb
+  }
+
+  private static func resolved(
+    repo: String,
+    pick: Pick,
+    siblings: [Sibling],
+    catalog: [CatalogEntry]
+  ) throws -> Resolved {
+    // Expand shards + attach mmproj.
+    let shards = try expandShards(main: pick.rfilename, siblings: siblings, repo: repo)
+    let mmproj = pickMmproj(repo: repo, siblings: siblings, catalog: catalog)
+
+    // Aggregate size (main + shards + mmproj), dropping unknown entries.
+    var allPicked: [String] = shards  // includes the main shard at index 0
+    if let m = mmproj { allPicked.append(m.rfilename) }
+    let sizeByPath: [String: Int64] = Dictionary(
+      uniqueKeysWithValues: siblings.map { ($0.rfilename, $0.size ?? 0) })
+    var approxBytes: Int64 = 0
+    for path in allPicked {
+      approxBytes += sizeByPath[path] ?? 0
+    }
+
+    let mainUrl = resolveUrl(repo: repo, path: pick.rfilename)
+    let extraUrls = shards.dropFirst().map { resolveUrl(repo: repo, path: $0) }
+    let mmprojUrl = mmproj.map { resolveUrl(repo: repo, path: $0.rfilename) }
+
+    return Resolved(
+      modelId: "\(repo):\(pick.quant)",
+      repo: repo,
+      quant: pick.quant,
+      mainUrl: mainUrl,
+      additionalParts: Array(extraUrls),
+      mmprojUrl: mmprojUrl,
+      approximateBytes: approxBytes
+    )
   }
 
   // MARK: - Shard + mmproj expansion
@@ -445,6 +475,31 @@ enum HFRepoResolver {
 
   private static func isGgufCandidate(_ path: String) -> Bool {
     path.lowercased().hasSuffix(".gguf")
+  }
+
+  private static func isRunnableGgufCandidate(_ path: String) -> Bool {
+    guard isGgufCandidate(path) else { return false }
+    let name = (path as NSString).lastPathComponent
+    let lower = name.lowercased()
+    if lower.hasPrefix("mmproj") { return false }
+    if lower.contains("imatrix") { return false }
+    if HFRepoParser.isSplitShard(name) && !HFRepoParser.isFirstShard(name) { return false }
+    return true
+  }
+
+  private static func quantLabel(for path: String) -> String? {
+    let filename = (path as NSString).lastPathComponent
+    return GGUFQuantLabel.parse(path) ?? HFRepoParser.parseQuant(filename: filename)
+  }
+
+  private static func compareResolvedOptions(_ lhs: Resolved, _ rhs: Resolved) -> Bool {
+    let lhsKnown = lhs.approximateBytes > 0
+    let rhsKnown = rhs.approximateBytes > 0
+    if lhsKnown != rhsKnown { return lhsKnown }
+    if lhs.approximateBytes != rhs.approximateBytes {
+      return lhs.approximateBytes < rhs.approximateBytes
+    }
+    return lhs.quant < rhs.quant
   }
 
   private static func isSafeQuantToken(_ value: String) -> Bool {

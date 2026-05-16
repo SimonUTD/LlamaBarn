@@ -14,6 +14,9 @@ final class MenuController: NSObject, NSMenuDelegate {
   private var selectedFamily: String?
   private var expandedModelIds: Set<String> = []
   private var infoExpandedModelIds: Set<String> = []  // Models with info text expanded
+  private var liveCatalogModelsByFamily: [String: [CatalogEntry]] = [:]
+  private var liveCatalogLoadingFamilies: Set<String> = []
+  private var liveCatalogGeneration = 0
 
   private var hintPopover: HintPopover?
 
@@ -141,6 +144,9 @@ final class MenuController: NSObject, NSMenuDelegate {
       [weak self] _ in
       MainActor.assumeIsolated {
         guard let self else { return }
+        if name == .LBUserSettingsDidChange {
+          self.resetLiveCatalogModels()
+        }
         if rebuildMenu {
           self.rebuildMenuIfPossible()
         }
@@ -361,9 +367,11 @@ final class MenuController: NSObject, NSMenuDelegate {
       menu.addItem(NSMenuItem.viewItem(with: descriptionView))
     }
 
-    // The catalog is canonical: every size and quantization the family offers
-    // is listed, with installed variants marked by the row itself.
-    let validModels = family.catalogModels()
+    loadLiveCatalogModelsIfNeeded(for: family)
+
+    // Start with bundled catalog metadata, then refresh to the actual HF repo
+    // variants (Q2/Q3/IQ/etc.) once the live file listing returns.
+    let validModels = liveCatalogModelsByFamily[family.name] ?? family.catalogModels()
 
     for model in validModels {
       let view = ModelItemView(
@@ -374,6 +382,117 @@ final class MenuController: NSObject, NSMenuDelegate {
         isInCatalog: true
       )
       menu.addItem(NSMenuItem.viewItem(with: view))
+    }
+  }
+
+  private func resetLiveCatalogModels() {
+    liveCatalogModelsByFamily.removeAll()
+    liveCatalogLoadingFamilies.removeAll()
+    liveCatalogGeneration += 1
+  }
+
+  private func loadLiveCatalogModelsIfNeeded(for family: ModelFamily) {
+    guard liveCatalogModelsByFamily[family.name] == nil,
+      !liveCatalogLoadingFamilies.contains(family.name)
+    else { return }
+
+    liveCatalogLoadingFamilies.insert(family.name)
+    let generation = liveCatalogGeneration
+    let catalog = Catalog.allModels()
+    let token = UserSettings.hfToken
+
+    Task { [weak self, family, catalog, token, generation] in
+      let models = await Self.fetchLiveCatalogModels(
+        for: family,
+        catalog: catalog,
+        token: token
+      )
+      guard let self else { return }
+      guard self.liveCatalogGeneration == generation else { return }
+
+      self.liveCatalogLoadingFamilies.remove(family.name)
+      if !models.isEmpty {
+        self.liveCatalogModelsByFamily[family.name] = models
+      }
+      if self.selectedFamily == family.name {
+        self.rebuildMenuIfPossible()
+      }
+    }
+  }
+
+  private static func fetchLiveCatalogModels(
+    for family: ModelFamily,
+    catalog: [CatalogEntry],
+    token: String?
+  ) async -> [CatalogEntry] {
+    var entriesByKey: [String: CatalogEntry] = [:]
+    for entry in family.catalogModels() {
+      entriesByKey[liveCatalogKey(for: entry)] = entry
+    }
+
+    for size in family.sizes {
+      for repo in liveRepos(for: size) {
+        do {
+          let resolvedModels = try await HFRepoResolver.listQuantizedFiles(
+            repo: repo,
+            catalog: catalog,
+            token: token
+          )
+          for resolved in resolvedModels {
+            let entry = family.liveCatalogEntry(size: size, resolved: resolved)
+            let key = liveCatalogKey(for: entry)
+            if let current = entriesByKey[key] {
+              if shouldPreferLiveEntry(entry, over: current) {
+                entriesByKey[key] = entry
+              }
+            } else {
+              entriesByKey[key] = entry
+            }
+          }
+        } catch {
+          continue
+        }
+      }
+    }
+
+    return sortLiveCatalogModels(Array(entriesByKey.values))
+  }
+
+  private static func liveRepos(for size: ModelSize) -> [String] {
+    var repos: [String] = []
+    var seen: Set<String> = []
+    for build in [size.build] + size.quantizedBuilds {
+      guard let repo = HFCache.repoId(from: build.downloadUrl),
+        seen.insert(repo).inserted
+      else { continue }
+      repos.append(repo)
+    }
+    return repos
+  }
+
+  private static func liveCatalogKey(for entry: CatalogEntry) -> String {
+    "\(entry.size)|\(entry.quantization.uppercased())"
+  }
+
+  private static func shouldPreferLiveEntry(_ candidate: CatalogEntry, over current: CatalogEntry)
+    -> Bool
+  {
+    if !current.id.contains(":") { return true }
+    if candidate.fileSize != current.fileSize { return candidate.fileSize > current.fileSize }
+    return candidate.id < current.id
+  }
+
+  private static func sortLiveCatalogModels(_ models: [CatalogEntry]) -> [CatalogEntry] {
+    models.sorted { lhs, rhs in
+      if lhs.parameterCount != rhs.parameterCount {
+        return lhs.parameterCount < rhs.parameterCount
+      }
+      let lhsKnown = lhs.fileSize > 0
+      let rhsKnown = rhs.fileSize > 0
+      if lhsKnown != rhsKnown { return lhsKnown }
+      if lhs.fileSize != rhs.fileSize { return lhs.fileSize < rhs.fileSize }
+      if lhs.quantization != rhs.quantization { return lhs.quantization < rhs.quantization }
+      return lhs.id < rhs.id
     }
   }
 

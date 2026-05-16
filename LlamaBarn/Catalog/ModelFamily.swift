@@ -45,6 +45,31 @@ struct ModelFamily {
     allModels.sorted(by: CatalogEntry.displayOrder(_:_:))
   }
 
+  func liveCatalogEntry(size: ModelSize, resolved: HFRepoResolver.Resolved) -> CatalogEntry {
+    let effectiveArgs = (serverArgs ?? []) + (size.serverArgs ?? [])
+    let quantization = resolved.quant.uppercased()
+    let fullPrecisionLabels: Set<String> = ["F16", "BF16", "FP16", "F32"]
+
+    return CatalogEntry(
+      id: resolved.modelId,
+      family: name,
+      parameterCount: size.parameterCount,
+      size: size.name,
+      ctxWindow: size.ctxWindow,
+      fileSize: resolved.approximateBytes,
+      ctxBytesPer1kTokens: size.ctxBytesPer1kTokens,
+      overheadMultiplier: overheadMultiplier,
+      downloadUrl: resolved.mainUrl,
+      additionalParts: resolved.additionalParts.isEmpty ? nil : resolved.additionalParts,
+      mmprojUrl: resolved.mmprojUrl ?? size.mmproj,
+      mmprojLocalFilename: size.mmprojLocalFilename,
+      serverArgs: effectiveArgs,
+      icon: iconName,
+      quantization: quantization,
+      isFullPrecision: fullPrecisionLabels.contains(quantization)
+    )
+  }
+
   func selectableModels() -> [CatalogEntry] {
     // Group by size (e.g., "27B") to pick the preferred version
     let modelsBySize = Dictionary(grouping: allModels, by: { $0.size })
